@@ -61,6 +61,22 @@ if [[ -z "$DB_PASS" ]]; then
   read -r -s -p "Enter password for MySQL user ${DB_USER}: " DB_PASS
   echo
 fi
+
+MYSQL_DEFAULTS_FILE=$(mktemp)
+chmod 600 "$MYSQL_DEFAULTS_FILE"
+{
+  printf '[client]\n'
+  printf 'user=%s\n' "$DB_USER"
+  printf 'password=%s\n' "$DB_PASS"
+} >"$MYSQL_DEFAULTS_FILE"
+
+cleanup_defaults_file() {
+  if [[ -n "${MYSQL_DEFAULTS_FILE:-}" && -f "$MYSQL_DEFAULTS_FILE" ]]; then
+    rm -f "$MYSQL_DEFAULTS_FILE"
+  fi
+}
+trap cleanup_defaults_file EXIT
+unset DB_PASS
 if ! command -v xxd >/dev/null 2>&1; then
   echo "Error: xxd is required (install vim-common)" >&2
   exit 1
@@ -74,13 +90,13 @@ LOGFILE="${EXPORT_DIR}/search_${TS}.log"
 echo "Search started: term='${SEARCH}', format='${FORMAT}', db='${DB_NAME:-ALL}'" | tee -a "$LOGFILE"
 
 _mysql_data() {
-  mysql --batch --raw --skip-column-names \
-    -u"$DB_USER" -p"$DB_PASS" -h "$DB_HOST" -P "$DB_PORT" \
+  mysql --defaults-extra-file="$MYSQL_DEFAULTS_FILE" --batch --raw --skip-column-names \
+    -h "$DB_HOST" -P "$DB_PORT" \
     -e "$1" 2>/dev/null | tr -d '\r'
 }
 _mysql_raw() {
-  mysql --batch --raw \
-    -u"$DB_USER" -p"$DB_PASS" -h "$DB_HOST" -P "$DB_PORT" \
+  mysql --defaults-extra-file="$MYSQL_DEFAULTS_FILE" --batch --raw \
+    -h "$DB_HOST" -P "$DB_PORT" \
     -e "$1" 2>/dev/null | tr -d '\r'
 }
 
