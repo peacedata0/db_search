@@ -88,7 +88,7 @@ escape_ident() {
   local id="$1"
   id="$(printf "%s" "$id" | tr -d '\r\n')"
   id="${id//\`/\`\`}"
-  printf "`%s`" "$id"
+  printf "%s" "\`$id\`"
 }
 
 csv_quote() {
