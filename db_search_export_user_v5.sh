@@ -87,8 +87,23 @@ _mysql_raw() {
 escape_ident() {
   local id="$1"
   id="$(printf "%s" "$id" | tr -d '\r\n')"
-  id="${id//\`/\`\`}"
+  id="${id//\`/\`\`}" 
   printf "%s" "\`$id\`"
+}
+
+sanitize_filename() {
+  local raw="$1"
+  local trimmed="$(printf "%s" "$raw" | tr -d '\r\n')"
+  local cleaned="$(printf "%s" "$trimmed" | sed 's/[^A-Za-z0-9._-]/_/g')"
+  if [[ -z "$cleaned" ]]; then
+    cleaned="unnamed"
+  fi
+  if [[ "$cleaned" != "$trimmed" ]]; then
+    local hex_suffix
+    hex_suffix=$(printf "%s" "$trimmed" | xxd -p | tr -d '\n' | head -c 8)
+    cleaned+="_${hex_suffix}"
+  fi
+  printf "%s" "$cleaned"
 }
 
 csv_quote() {
@@ -161,7 +176,9 @@ for HEX_DB in "${DBS_HEX[@]}"; do
           | awk -F'\t' 'NR==1{for(i=1;i<=NF;i++)h[i]=$i; next}{print "---"; for(i=1;i<=NF;i++)print h[i]"="$i}' >> "$OUT"
 
       else
-        OUT="${EXPORT_DIR}/search_${DB}_${TS}.csv"
+        safe_db=$(sanitize_filename "$DB")
+        safe_table=$(sanitize_filename "$TABLE")
+        OUT="${EXPORT_DIR}/search_${safe_db}_${safe_table}_${TS}.csv"
         if [[ ! -f "$OUT" ]]; then
           HEADER_LINE=$(_mysql_raw "SELECT * FROM ${esc_db}.${esc_table} LIMIT 1;" | head -n1)
           if [[ -z "$HEADER_LINE" ]]; then
