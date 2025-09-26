@@ -58,7 +58,7 @@ if [[ "$FORMAT" != "csv" && "$FORMAT" != "txt" ]]; then
   usage
 fi
 if [[ -z "$DB_PASS" ]]; then
-  read -s -p "Enter password for MySQL user ${DB_USER}: " DB_PASS
+  read -r -s -p "Enter password for MySQL user ${DB_USER}: " DB_PASS
   echo
 fi
 if ! command -v xxd >/dev/null 2>&1; then
@@ -96,6 +96,24 @@ csv_quote() {
   s="$(printf "%s" "$s" | tr -d '\r')"
   s="${s//\"/\"\"}"
   printf "\"%s\"" "$s"
+}
+
+join_csv_fields() {
+  local line="$1"
+  local IFS=$'\t'
+  read -r -a fields <<< "$line" || fields=()
+  local out=""
+  local field
+  for field in "${fields[@]}"; do
+    local quoted
+    quoted=$(csv_quote "$field")
+    if [[ -z "$out" ]]; then
+      out="$quoted"
+    else
+      out+=",$quoted"
+    fi
+  done
+  printf "%s" "$out"
 }
 
 # get DB list
@@ -140,7 +158,7 @@ for HEX_DB in "${DBS_HEX[@]}"; do
         OUT="${EXPORT_DIR}/search_${DB}_${TS}.txt"
         { echo "# DB: ${DB}"; echo "# Table: ${TABLE}"; echo "# Column: ${COL}"; } >> "$OUT"
         _mysql_raw "SELECT * FROM ${esc_db}.${esc_table} WHERE ${esc_col} = '${ESCAPED_SEARCH}';" \
-          | awk 'NR==1{for(i=1;i<=NF;i++)h[i]=$i; next}{print "---"; for(i=1;i<=NF;i++)print h[i]"="$i}' >> "$OUT"
+          | awk -F'\t' 'NR==1{for(i=1;i<=NF;i++)h[i]=$i; next}{print "---"; for(i=1;i<=NF;i++)print h[i]"="$i}' >> "$OUT"
 
       else
         OUT="${EXPORT_DIR}/search_${DB}_${TS}.csv"
@@ -150,14 +168,25 @@ for HEX_DB in "${DBS_HEX[@]}"; do
             # fallback: DESCRIBE
             HEADER_LINE=$(_mysql_data "DESCRIBE ${esc_db}.${esc_table};" | awk '{print $1}' | paste -sd $'\t')
           fi
-          HEADER_COMMA=$(printf "%s" "$HEADER_LINE" | sed 's/\t/,/g')
+          HEADER_COMMA=$(join_csv_fields "$HEADER_LINE")
           echo "db_name,table_name,column_name,${HEADER_COMMA}" > "$OUT"
         fi
         _mysql_data "SELECT t.* FROM ${esc_db}.${esc_table} t WHERE ${esc_col} = '${ESCAPED_SEARCH}';" \
-          | while IFS= read -r row || [[ -n "$row" ]]; do
-              pref=$(csv_quote "$DB"),$(csv_quote "$TABLE"),$(csv_quote "$COL")
-              echo "$pref,$(printf "%s" "$row" | sed 's/\t/,/g')" >> "$OUT"
-            done
+          | awk -v pref_db="$(csv_quote "$DB")" \
+                -v pref_table="$(csv_quote "$TABLE")" \
+                -v pref_col="$(csv_quote "$COL")" \
+                'BEGIN{FS="\t"} {
+                   printf "%s,%s,%s", pref_db, pref_table, pref_col;
+                   for (i = 1; i <= NF; i++) {
+                     if ($i == "NULL") {
+                       printf ",NULL";
+                       continue;
+                     }
+                     gsub(/"/, "\"\"", $i);
+                     printf ",\"%s\"", $i;
+                   }
+                   printf "\n";
+                 }' >> "$OUT"
       fi
     fi
   done
