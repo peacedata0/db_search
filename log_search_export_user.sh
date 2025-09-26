@@ -75,9 +75,9 @@ for path in "${LOGPATHS[@]}"; do
   for file in $path; do
     [[ -e "$file" ]] || continue
     if [[ "$file" == *.gz ]]; then
-      CMD="zgrep -H -F \"$SEARCH\" \"$file\" || true"
+      search_cmd=(zgrep -H -F -- "$SEARCH" "$file")
     else
-      CMD="grep -H -F \"$SEARCH\" \"$file\" || true"
+      search_cmd=(grep -H -F -- "$SEARCH" "$file")
     fi
 
     while IFS= read -r line; do
@@ -85,7 +85,9 @@ for path in "${LOGPATHS[@]}"; do
       logfile="${line%%:*}"
       record="${line#*:}"
       append_csv "$logfile" "$record"
-    done < <(eval "$CMD")
+    done < <(
+      "${search_cmd[@]}" || true
+    )
   done
 done
 

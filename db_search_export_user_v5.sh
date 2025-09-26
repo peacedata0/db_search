@@ -166,6 +166,7 @@ ESCAPED_SEARCH=$(printf "%s" "$RAW_QUOTED" | sed -e "s/^'//" -e "s/'$//")
 
 for HEX_DB in "${DBS_HEX[@]}"; do
   DB=$(printf "%s" "$HEX_DB" | xxd -r -p)
+  safe_db=$(sanitize_filename "$DB")
   echo ">>> Scanning DB: [$DB]" | tee -a "$LOGFILE"
 
   COLS_Q="SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE SCHEMA_NAME = UNHEX('${HEX_DB}');"
@@ -193,7 +194,7 @@ for HEX_DB in "${DBS_HEX[@]}"; do
       fi
 
       if [[ "$FORMAT" == "txt" ]]; then
-        OUT="${EXPORT_DIR}/search_${DB}_${TS}.txt"
+        OUT="${EXPORT_DIR}/search_${safe_db}_${TS}.txt"
         { echo "# DB: ${DB}"; echo "# Table: ${TABLE}"; echo "# Column: ${COL}"; } >> "$OUT"
         _mysql_data "SELECT t.* FROM ${esc_db}.${esc_table} t WHERE ${esc_col} = '${ESCAPED_SEARCH}';" \
           | python3 -c 'import sys, codecs
@@ -222,7 +223,6 @@ for raw_line in sys.stdin:
 ' "$header_line" >> "$OUT"
 
       else
-        safe_db=$(sanitize_filename "$DB")
         safe_table=$(sanitize_filename "$TABLE")
         OUT="${EXPORT_DIR}/search_${safe_db}_${safe_table}_${TS}.csv"
         if [[ ! -f "$OUT" ]]; then
