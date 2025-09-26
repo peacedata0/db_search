@@ -221,6 +221,7 @@ headers = headers_arg.split("\t") if headers_arg else []
 def decode(value: str) -> str:
     if value in ("NULL", r"\N"):
         return value
+    value = value.replace("\\Z", "\x1a")
     try:
         return codecs.decode(value.encode("utf-8"), "unicode_escape")
     except Exception:
@@ -261,6 +262,7 @@ prefix = [db_name, table_name, column_name]
 def decode(value: str) -> str:
     if value in ("NULL", r"\N"):
         return value
+    value = value.replace("\\Z", "\x1a")
     try:
         return codecs.decode(value.encode("utf-8"), "unicode_escape")
     except Exception:
