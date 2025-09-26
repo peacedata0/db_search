@@ -6,8 +6,8 @@ set -o pipefail
 # --------------------------------------------------------
 # db_search_export_user_v7.sh
 # Hardened DB-wide exact-search tool for MySQL/MariaDB
-# Fix: _mysql_raw now uses --batch --raw (tab-separated),
-# so TXT and CSV headers are parsed correctly.
+# Update: data readers use --batch with escape-aware decoding
+# so TXT and CSV exports handle embedded newlines safely.
 # --------------------------------------------------------
 
 DB_USER="root"
@@ -90,14 +90,15 @@ LOGFILE="${EXPORT_DIR}/search_${TS}.log"
 echo "Search started: term='${SEARCH}', format='${FORMAT}', db='${DB_NAME:-ALL}'" | tee -a "$LOGFILE"
 
 _mysql_data() {
-  mysql --defaults-extra-file="$MYSQL_DEFAULTS_FILE" --batch --raw --skip-column-names \
+  mysql --defaults-extra-file="$MYSQL_DEFAULTS_FILE" --batch --skip-column-names \
     -h "$DB_HOST" -P "$DB_PORT" \
     -e "$1" 2>/dev/null | tr -d '\r'
 }
-_mysql_raw() {
-  mysql --defaults-extra-file="$MYSQL_DEFAULTS_FILE" --batch --raw \
-    -h "$DB_HOST" -P "$DB_PORT" \
-    -e "$1" 2>/dev/null | tr -d '\r'
+get_table_header_line() {
+  local schema_hex="$1"
+  local table_hex="$2"
+  _mysql_data "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = UNHEX('${schema_hex}') AND TABLE_NAME = UNHEX('${table_hex}') ORDER BY ORDINAL_POSITION;" \
+    | paste -sd $'\t'
 }
 
 escape_ident() {
@@ -185,41 +186,82 @@ for HEX_DB in "${DBS_HEX[@]}"; do
     if [[ "$COUNT" -gt 0 ]]; then
       echo "  Found in ${DB}.${TABLE}.${COL} -> ${COUNT} rows" | tee -a "$LOGFILE"
 
+      table_hex=$(printf "%s" "$TABLE" | xxd -p | tr -d '\n')
+      header_line=$(get_table_header_line "$HEX_DB" "$table_hex")
+      if [[ -z "$header_line" ]]; then
+        header_line=$(_mysql_data "DESCRIBE ${esc_db}.${esc_table};" | awk '{print $1}' | paste -sd $'\t')
+      fi
+
       if [[ "$FORMAT" == "txt" ]]; then
         OUT="${EXPORT_DIR}/search_${DB}_${TS}.txt"
         { echo "# DB: ${DB}"; echo "# Table: ${TABLE}"; echo "# Column: ${COL}"; } >> "$OUT"
-        _mysql_raw "SELECT * FROM ${esc_db}.${esc_table} WHERE ${esc_col} = '${ESCAPED_SEARCH}';" \
-          | awk -F'\t' 'NR==1{for(i=1;i<=NF;i++)h[i]=$i; next}{print "---"; for(i=1;i<=NF;i++)print h[i]"="$i}' >> "$OUT"
+        _mysql_data "SELECT t.* FROM ${esc_db}.${esc_table} t WHERE ${esc_col} = '${ESCAPED_SEARCH}';" \
+          | python3 -c 'import sys, codecs
+headers_arg = sys.argv[1] if len(sys.argv) > 1 else ""
+headers = headers_arg.split("\t") if headers_arg else []
+
+def decode(value: str) -> str:
+    if value in ("NULL", r"\N"):
+        return value
+    try:
+        return codecs.decode(value.encode("utf-8"), "unicode_escape")
+    except Exception:
+        return value
+
+for raw_line in sys.stdin:
+    if not raw_line:
+        continue
+    fields = raw_line.rstrip("\n").split("\t")
+    sys.stdout.write("---\n")
+    for idx, name in enumerate(headers):
+        val = fields[idx] if idx < len(fields) else ""
+        if val in ("NULL", r"\N"):
+            sys.stdout.write(f"{name}=NULL\n")
+        else:
+            sys.stdout.write(f"{name}={decode(val)}\n")
+' "$header_line" >> "$OUT"
 
       else
         safe_db=$(sanitize_filename "$DB")
         safe_table=$(sanitize_filename "$TABLE")
         OUT="${EXPORT_DIR}/search_${safe_db}_${safe_table}_${TS}.csv"
         if [[ ! -f "$OUT" ]]; then
-          HEADER_LINE=$(_mysql_raw "SELECT * FROM ${esc_db}.${esc_table} LIMIT 1;" | head -n1)
-          if [[ -z "$HEADER_LINE" ]]; then
-            # fallback: DESCRIBE
-            HEADER_LINE=$(_mysql_data "DESCRIBE ${esc_db}.${esc_table};" | awk '{print $1}' | paste -sd $'\t')
+          HEADER_SOURCE="$header_line"
+          if [[ -z "$HEADER_SOURCE" ]]; then
+            HEADER_SOURCE=$(_mysql_data "DESCRIBE ${esc_db}.${esc_table};" | awk '{print $1}' | paste -sd $'\t')
           fi
-          HEADER_COMMA=$(join_csv_fields "$HEADER_LINE")
+          HEADER_COMMA=$(join_csv_fields "$HEADER_SOURCE")
           echo "db_name,table_name,column_name,${HEADER_COMMA}" > "$OUT"
         fi
         _mysql_data "SELECT t.* FROM ${esc_db}.${esc_table} t WHERE ${esc_col} = '${ESCAPED_SEARCH}';" \
-          | awk -v pref_db="$(csv_quote "$DB")" \
-                -v pref_table="$(csv_quote "$TABLE")" \
-                -v pref_col="$(csv_quote "$COL")" \
-                'BEGIN{FS="\t"} {
-                   printf "%s,%s,%s", pref_db, pref_table, pref_col;
-                   for (i = 1; i <= NF; i++) {
-                     if ($i == "NULL") {
-                       printf ",NULL";
-                       continue;
-                     }
-                     gsub(/"/, "\"\"", $i);
-                     printf ",\"%s\"", $i;
-                   }
-                   printf "\n";
-                 }' >> "$OUT"
+          | python3 -c 'import sys, csv, codecs
+
+db_name, table_name, column_name, header_arg = sys.argv[1:5]
+headers = header_arg.split("\t") if header_arg else []
+writer = csv.writer(sys.stdout, lineterminator="\n")
+prefix = [db_name, table_name, column_name]
+
+def decode(value: str) -> str:
+    if value in ("NULL", r"\N"):
+        return value
+    try:
+        return codecs.decode(value.encode("utf-8"), "unicode_escape")
+    except Exception:
+        return value
+
+for raw_line in sys.stdin:
+    if not raw_line:
+        continue
+    fields = raw_line.rstrip("\n").split("\t")
+    row = prefix.copy()
+    for idx, name in enumerate(headers):
+        val = fields[idx] if idx < len(fields) else ""
+        if val in ("NULL", r"\N"):
+            row.append("NULL")
+        else:
+            row.append(decode(val))
+    writer.writerow(row)
+' "$DB" "$TABLE" "$COL" "$header_line" >> "$OUT"
       fi
     fi
   done
