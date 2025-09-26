@@ -43,7 +43,7 @@ done
 
 # default log paths
 if [[ ${#LOGPATHS[@]} -eq 0 ]]; then
-  LOGPATHS=( /var/log/apache2/*access*.log* /var/log/nginx/*access*.log* )
+  LOGPATHS=( "/var/log/apache2/*access*.log*" "/var/log/nginx/*access*.log*" )
 fi
 
 TS=$(date +"%Y%m%d_%H%M%S")
