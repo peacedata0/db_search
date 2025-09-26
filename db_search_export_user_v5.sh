@@ -97,8 +97,9 @@ _mysql_data() {
 get_table_header_line() {
   local schema_hex="$1"
   local table_hex="$2"
-  _mysql_data "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = UNHEX('${schema_hex}') AND TABLE_NAME = UNHEX('${table_hex}') ORDER BY ORDINAL_POSITION;" \
-    | paste -sd $'\t'
+  local query
+  query="SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = UNHEX('${schema_hex}') AND TABLE_NAME = UNHEX('${table_hex}') ORDER BY ORDINAL_POSITION;"
+  _mysql_data "$query" | paste -sd $'\t'
 }
 
 escape_ident() {
