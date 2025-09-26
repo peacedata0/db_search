@@ -74,31 +74,50 @@ shopt -u nullglob
 
 if [[ -z "$OUTFILE" && $CUSTOM_PATH -eq 0 ]]; then
   keyword="logs"
-  token=""
+  server_type=""
+
   for log in "${RESOLVED_LOGS[@]}"; do
-    [[ -f "$log" ]] || continue
-    base=$(basename "$log")
-    stripped=$(printf '%s\n' "$base" | sed -E 's/\.log(\..*)?$//')
-    OLDIFS=$IFS
-    IFS='._-'
-    read -ra parts <<< "$stripped"
-    IFS=$OLDIFS
-    for part in "${parts[@]}"; do
-      [[ -z "$part" || "$part" == access ]] && continue
-      token="$part"
-      break 2
-    done
+    lower_log=${log,,}
+    case "$lower_log" in
+      *nginx*) server_type="nginx"; break ;;
+      *apache*) server_type="apache"; break ;;
+    esac
   done
-  if [[ -n "$token" ]]; then
-    keyword="$token"
-  else
+
+  if [[ -z "$server_type" ]]; then
     for p in "${LOGPATHS[@]}"; do
-      case "$p" in
-        *nginx*) keyword="nginx"; break ;;
-        *apache*) keyword="apache"; break ;;
+      lower_path=${p,,}
+      case "$lower_path" in
+        *nginx*) server_type="nginx"; break ;;
+        *apache*) server_type="apache"; break ;;
       esac
     done
   fi
+
+  if [[ -n "$server_type" ]]; then
+    keyword="$server_type"
+  else
+    token=""
+    for log in "${RESOLVED_LOGS[@]}"; do
+      [[ -f "$log" ]] || continue
+      base=$(basename "$log")
+      stripped=$(printf '%s\n' "$base" | sed -E 's/\.log(\..*)?$//')
+      OLDIFS=$IFS
+      IFS='._-'
+      read -ra parts <<< "$stripped"
+      IFS=$OLDIFS
+      for part in "${parts[@]}"; do
+        [[ -z "$part" || "$part" == access ]] && continue
+        token="$part"
+        break 2
+      done
+    done
+
+    if [[ -n "$token" ]]; then
+      keyword="$token"
+    fi
+  fi
+
   OUTFILE="access_search_${keyword}_${TS}.csv"
 fi
 
@@ -135,9 +154,9 @@ fi
 for file in "${RESOLVED_LOGS[@]}"; do
   [[ -e "$file" ]] || continue
   if [[ "$file" == *.gz ]]; then
-    search_cmd=(zgrep -H -F -- "$SEARCH" "$file")
+    search_cmd=(zgrep --binary-files=text -H -F -- "$SEARCH" "$file")
   else
-    search_cmd=(grep -H -F -- "$SEARCH" "$file")
+    search_cmd=(grep --binary-files=text -H -F -- "$SEARCH" "$file")
   fi
 
   if [[ -n "$OUTFILE" ]]; then
