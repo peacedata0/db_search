@@ -146,11 +146,6 @@ append_csv() {
 # scan logs
 declare -A OUTPUTS_SEEN=()
 
-if [[ -n "$OUTFILE" ]]; then
-  append_header_if_needed "$OUTFILE"
-  OUTPUTS_SEEN["$OUTFILE"]=1
-fi
-
 for file in "${RESOLVED_LOGS[@]}"; do
   [[ -e "$file" ]] || continue
   if [[ "$file" == *.gz ]]; then
@@ -169,16 +164,23 @@ for file in "${RESOLVED_LOGS[@]}"; do
     current_outfile="access_search_${keyword}_${TS}.csv"
   fi
 
-  OUTPUTS_SEEN["$current_outfile"]=1
-
+  matched=0
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     logfile="${line%%:*}"
     record="${line#*:}"
     append_csv "$current_outfile" "$logfile" "$record"
+    matched=1
   done < <(
     "${search_cmd[@]}" || true
   )
+
+  if [[ $matched -eq 1 ]]; then
+    OUTPUTS_SEEN["$current_outfile"]=1
+  elif [[ -n "$current_outfile" && -f "$current_outfile" && -z ${OUTPUTS_SEEN[$current_outfile]+x} && ${WRITTEN_HEADERS[$current_outfile]+x} ]]; then
+    rm -f "$current_outfile"
+    unset 'WRITTEN_HEADERS[$current_outfile]'
+  fi
 done
 
 if [[ ${#OUTPUTS_SEEN[@]} -eq 0 ]]; then

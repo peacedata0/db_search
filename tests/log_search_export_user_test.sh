@@ -70,3 +70,28 @@ if grep -q 'binary file matches' "$binary_output"; then
 fi
 
 echo "Test passed: binary logs are exported correctly."
+
+# Test 4: no matches yields no CSV output
+no_match_log="$tmpdir/no_match.log"
+absent_pattern="absentpattern$$"
+printf 'this line does not match\n' > "$no_match_log"
+
+mapfile -d '' -t before_csvs < <(find "$tmpdir" -maxdepth 1 -type f -name '*.csv' -print0 | sort -z)
+
+summary=$(bash "$script" -s "$absent_pattern" -p "$no_match_log" 2>&1)
+
+if [[ "$summary" != *"Done. No matches found."* ]]; then
+  echo "Unexpected summary for no-match search: $summary" >&2
+  exit 1
+fi
+
+mapfile -d '' -t after_csvs < <(find "$tmpdir" -maxdepth 1 -type f -name '*.csv' -print0 | sort -z)
+
+if [[ ${#after_csvs[@]} -ne ${#before_csvs[@]} ]]; then
+  echo "CSV files were created despite no matches being found" >&2
+  printf 'Before:%s\n' "${before_csvs[*]}" >&2
+  printf 'After:%s\n' "${after_csvs[*]}" >&2
+  exit 1
+fi
+
+echo "Test passed: no matches produce no CSV output."
