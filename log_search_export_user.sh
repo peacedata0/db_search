@@ -57,10 +57,17 @@ for path in "${LOGPATHS[@]}"; do
       RESOLVED_LOGS+=( "$file" )
     done < <(find "$path" -maxdepth 1 -type f -name '*.log*' -print0 | sort -z)
   else
-    for file in $path; do
+    # Preserve whitespace in expanded filenames by consuming a NUL-delimited stream
+    # so custom glob patterns such as "/var/log/custom/* access.log" are handled safely.
+    while IFS= read -r -d '' file; do
       [[ -f "$file" ]] || continue
       RESOLVED_LOGS+=( "$file" )
-    done
+    done < <(
+      { compgen -G "$path" 2>/dev/null || true; } | while IFS= read -r match; do
+        [[ -z "$match" ]] && continue
+        printf '%s\0' "$match"
+      done
+    )
   fi
 done
 shopt -u nullglob

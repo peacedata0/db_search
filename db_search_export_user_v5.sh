@@ -92,7 +92,20 @@ echo "Search started: term='${SEARCH}', format='${FORMAT}', db='${DB_NAME:-ALL}'
 _mysql_data() {
   mysql --defaults-extra-file="$MYSQL_DEFAULTS_FILE" --batch --skip-column-names \
     -h "$DB_HOST" -P "$DB_PORT" \
-    -e "$1" 2>/dev/null | tr -d '\r'
+    -e "$1" | tr -d '\r'
+}
+
+mysql_capture() {
+  local context="$1"
+  local query="$2"
+  local result
+  if ! result=$(_mysql_data "$query"); then
+    echo "ERROR: MySQL query failed while ${context}. Aborting." | tee -a "$LOGFILE" >&2
+    exit 1
+  fi
+  if [[ -n "$result" ]]; then
+    printf '%s\n' "$result"
+  fi
 }
 get_table_header_line() {
   local schema_hex="$1"
@@ -155,7 +168,7 @@ if [[ -n "$DB_NAME" ]]; then
   DBS_HEX=( "$(printf "%s" "$DB_NAME" | xxd -p | tr -d '\n')" )
 else
   Q="SELECT HEX(SCHEMA_NAME) FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME NOT IN ('information_schema','performance_schema','mysql','sys');"
-  mapfile -t DBS_HEX < <(_mysql_data "$Q" || true)
+  mapfile -t DBS_HEX < <(mysql_capture "listing databases" "$Q")
 fi
 [[ ${#DBS_HEX[@]} -eq 0 ]] && { echo "No DBs." | tee -a "$LOGFILE"; exit 0; }
 
@@ -171,7 +184,7 @@ for HEX_DB in "${DBS_HEX[@]}"; do
   echo ">>> Scanning DB: [$DB]" | tee -a "$LOGFILE"
 
   COLS_Q="SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE SCHEMA_NAME = UNHEX('${HEX_DB}');"
-  mapfile -t col_lines < <(_mysql_data "$COLS_Q" || true)
+  mapfile -t col_lines < <(mysql_capture "listing columns for ${DB}" "$COLS_Q")
 
   for line in "${col_lines[@]}"; do
     IFS=$'\t' read -r TABLE COL <<< "$line"
@@ -181,7 +194,10 @@ for HEX_DB in "${DBS_HEX[@]}"; do
     esc_table=$(escape_ident "$TABLE")
     esc_col=$(escape_ident "$COL")
 
-    COUNT=$(_mysql_data "SELECT COUNT(*) FROM ${esc_db}.${esc_table} WHERE ${esc_col} = '${ESCAPED_SEARCH}';" || echo "0")
+    if ! COUNT=$(_mysql_data "SELECT COUNT(*) FROM ${esc_db}.${esc_table} WHERE ${esc_col} = '${ESCAPED_SEARCH}';"); then
+      echo "ERROR: Failed to count matches for ${DB}.${TABLE}.${COL}. Aborting." | tee -a "$LOGFILE" >&2
+      exit 1
+    fi
     COUNT=${COUNT:-0}
     [[ ! "$COUNT" =~ ^[0-9]+$ ]] && COUNT=0
 
