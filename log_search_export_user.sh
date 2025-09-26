@@ -66,6 +66,7 @@ append_csv() {
   local logfile="$1"
   local record="$2"
   # escape double quotes
+  logfile="${logfile//\"/\"\"}"
   record="${record//\"/\"\"}"
   printf "\"%s\",\"%s\"\n" "$logfile" "$record" >> "$OUTFILE"
 }
